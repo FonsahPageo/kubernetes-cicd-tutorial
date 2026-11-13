@@ -20,8 +20,11 @@ jobs:
         uses: docker/setup-buildx-action@v2
       - name: Set lowercase image name
         id: image-name
-        shell: bash
-        run: echo "image=ghcr.io/${GITHUB_REPOSITORY,,}" >> "$GITHUB_OUTPUT"
+        shell: powershell
+        run: |
+          $image = "ghcr.io/$($env:GITHUB_REPOSITORY.ToLowerInvariant())"
+          $utf8 = [System.Text.UTF8Encoding]::new($false)
+          [System.IO.File]::AppendAllText($env:GITHUB_OUTPUT, "image=$image`n", $utf8)
       - name: Build and push Docker image
         uses: docker/build-push-action@v4
         with:
@@ -31,33 +34,36 @@ jobs:
             ${{ steps.image-name.outputs.image }}:latest
             ${{ steps.image-name.outputs.image }}:${{ github.sha }}
       - name: Update GitOps repository
-        shell: bash
+        shell: powershell
         env:
           GIT_TOKEN: ${{ secrets.GITOPS_PAT }}
           IMAGE_NAME: ${{ steps.image-name.outputs.image }}
+          IMAGE_TAG: ${{ github.sha }}
         run: |
-          # Configure git credential store
-          git config --global credential.helper store
-          echo "https://${GIT_TOKEN}:x-oauth-basic@github.com" > ~/.git-credentials
-          
-          # Remove any existing gitops directory
-          rm -rf gitops
-          
-          # Clone repository using HTTPS URL without token
+          $ErrorActionPreference = 'Stop'
+          if (Test-Path gitops) {
+            Remove-Item -Recurse -Force gitops
+          }
           git clone https://github.com/fonsahpageo/grade-api-gitops.git gitops
-          cd gitops
-          
-          if [[ "$OSTYPE" == "darwin"* ]]; then
-            sed -i '' sed -i "s|image: ghcr.io/.*:.*|image: ${IMAGE_NAME}:${{ github.sha }}|g" deployment.yaml
-          else
-            sed -i "s|image: ghcr.io/.*:.*|image: ${IMAGE_NAME}:${{ github.sha }}|g" deployment.yaml
-          fi
-          
-          # Commit changes
-          git config --global user.name "GitHub Actions"
-          git config --global user.email "actions@github.com"
-          git add deployment.yaml
-          git commit -m "Update image to ${{ github.sha }}"
-          
-          # Push
-          git push -f https://${GIT_TOKEN}@github.com/fonsahpageo/grade-api-gitops.git main
+          if ($LASTEXITCODE -ne 0) { throw 'git clone failed' }
+          Push-Location gitops
+          try {
+            $deployment = [System.IO.File]::ReadAllText("$PWD\deployment.yaml")
+            $image = "image: ${env:IMAGE_NAME}:${env:IMAGE_TAG}"
+            $deployment = $deployment -replace 'image: ghcr.io/.*:.*', $image
+            [System.IO.File]::WriteAllText("$PWD\deployment.yaml", $deployment)
+
+            git config user.name "GitHub Actions"
+            if ($LASTEXITCODE -ne 0) { throw 'git config user.name failed' }
+            git config user.email "actions@github.com"
+            if ($LASTEXITCODE -ne 0) { throw 'git config user.email failed' }
+            git add deployment.yaml
+            if ($LASTEXITCODE -ne 0) { throw 'git add failed' }
+            git commit -m "Update image to $env:IMAGE_TAG"
+            if ($LASTEXITCODE -ne 0) { throw 'git commit failed' }
+            git push -f "https://x-access-token:$($env:GIT_TOKEN)@github.com/fonsahpageo/grade-api-gitops.git" main
+            if ($LASTEXITCODE -ne 0) { throw 'git push failed' }
+          }
+          finally {
+            Pop-Location
+          }
