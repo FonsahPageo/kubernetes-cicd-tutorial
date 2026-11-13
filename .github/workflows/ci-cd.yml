@@ -20,6 +20,8 @@ jobs:
         uses: docker/setup-buildx-action@v2
       - name: Build and push Docker image
         uses: docker/build-push-action@v4
+        env:
+          IMAGE_NAME: ghcr.io/${GITHUB_REPOSITORY,,}
         with:
           context: .
           push: true
@@ -30,6 +32,7 @@ jobs:
         shell: bash
         env:
           GIT_TOKEN: ${{ secrets.GITOPS_PAT }}
+          IMAGE_NAME: ghcr.io/${GITHUB_REPOSITORY,,}
         run: |
           # Configure git credential store
           git config --global credential.helper store
@@ -43,9 +46,9 @@ jobs:
           cd gitops
           
           if [[ "$OSTYPE" == "darwin"* ]]; then
-            sed -i '' "s|image: ghcr.io/${{ github.repository }}:.*|image: ghcr.io/${{ github.repository }}:${{ github.sha }}|g" deployment.yaml
+            sed -i '' sed -i "s|image: ghcr.io/.*:.*|image: ${IMAGE_NAME}:${{ github.sha }}|g" deployment.yaml
           else
-            sed -i "s|image: ghcr.io/${{ github.repository }}:.*|image: ghcr.io/${{ github.repository }}:${{ github.sha }}|g" deployment.yaml
+            sed -i "s|image: ghcr.io/.*:.*|image: ${IMAGE_NAME}:${{ github.sha }}|g" deployment.yaml
           fi
           
           # Commit changes
